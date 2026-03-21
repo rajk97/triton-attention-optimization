@@ -26,3 +26,5 @@ Thumbs.db
 *.sqlite
 
 tracker.md
+
+.github/*
