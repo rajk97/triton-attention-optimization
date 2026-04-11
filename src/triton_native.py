@@ -1,3 +1,4 @@
+import torch
 import triton
 import triton.language as tl
 
@@ -39,3 +40,28 @@ def naive_attention_kernel(Q_ptr, K_ptr, V_ptr, O_ptr, N, stride_qn, stride_kn, 
     tl.store(O_ptr+row_i*stride_on+col_offsets, O_row, mask = col_offsets<d_k)        
     
     return
+
+def naive_attention(Q, K, V):
+
+    N, d_k = Q.shape
+    O = torch.empty(N, d_k, device=Q.device, dtype = torch.float32)
+    grid = (N,)
+    naive_attention_kernel[grid](Q, K, V, O, N, Q.stride(0), K.stride(0), V.stride(0), O.stride(0), d_k)
+
+    return O
+
+if __name__ == "__main__":
+
+    # Define dimensions 
+    N = 1024
+    d_k = 64
+
+    Q = torch.randn((N, d_k), device='cuda')
+    K = torch.randn((N, d_k), device='cuda')
+    V = torch.randn((N, d_k), device='cuda')
+
+    O = naive_attention(Q, K, V)
+
+    # Validate against PyTorch 
+    O_ref = torch.nn.functional.scaled_dot_product_attention(Q, K, V)
+    print(f"Max error: {(O-O_ref).abs().max().item()}")
