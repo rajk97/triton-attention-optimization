@@ -4,18 +4,18 @@
 Build a FlashAttention-style fused attention kernel in Triton from scratch, progressively optimize it using profiling data, and produce a polished Jupyter notebook that tells the optimization story. This is the crown jewel project — the single most impressive artifact for an inference engineering job.
 
 ## Environment (DO NOT reinstall anything)
-- **Activate**: `source ~/deeplearn_env/bin/activate`
+- **Activate**: `conda activate pytorch`
 - **Working dir**: `/home/raj/Documents/Projects/inference_projects/project1_triton_attention/`
-- **GPU**: NVIDIA RTX 5060 Laptop (Blackwell, sm_120, 8GB VRAM, ~448 GB/s bandwidth, ~15 TFLOPS measured)
-- **PyTorch**: 2.10.0+cu128
-- **Triton**: 3.6.0
+- **GPU**: NVIDIA GeForce RTX 4090 (Ada Lovelace, sm_89, 24GB VRAM, ~1008 GB/s bandwidth)
+- **PyTorch**: 2.8.0+cu128
+- **Triton**: 3.4.0
 - **Also available**: matplotlib, plotly, numpy, pandas, tabulate, gpustat
 - **Key hardware numbers for roofline**:
-  - Peak memory bandwidth: ~448 GB/s (GDDR7, 128-bit)
-  - Peak compute (FP32): ~15 TFLOPS (measured via matmul)
-  - Peak compute (FP16/BF16 Tensor Cores): estimate ~30+ TFLOPS
-  - Shared memory per SM: 100 KB, per block: 48 KB
-  - SMs: 26, Registers/SM: 65536
+  - Peak memory bandwidth: ~1008 GB/s (GDDR6X, 384-bit)
+  - Peak compute (FP32): ~82.6 TFLOPS
+  - Peak compute (FP16/BF16 Tensor Cores): ~165+ TFLOPS (with sparsity: ~330 TFLOPS)
+  - Shared memory per SM: 100 KB, per block: up to 100 KB (configurable)
+  - SMs: 128, Registers/SM: 65536
 
 ## Time Budget: 100 minutes total
 | Phase | Minutes | Description |
