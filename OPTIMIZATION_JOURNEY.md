@@ -19,29 +19,41 @@ Building a FlashAttention-style fused attention kernel in Triton from scratch, w
 ---
 
 ## Phase 1: Naive Attention Kernel
-**Status**: Not started
+**Status**: Complete ✓
 
 ### Objective
 Implement `O = softmax(Q @ K^T / sqrt(d_k)) @ V` as a single Triton kernel. One program instance per query row. Correct but slow — materializes full N×N attention matrix.
 
 ### Key Decisions & Learnings
-<!-- Add entries as you progress -->
+- Two-pass approach: Triton can't store an N-length scratch array, so pass 1 finds max score, pass 2 uses it for stable softmax + output accumulation in one shot
+- Element-wise Q*K with `tl.sum` for dot product (no `tl.dot` for vector-vector)
+- Float32 accumulators throughout for correctness
 
 ### Results
-<!-- Correctness checks, initial timing -->
+- Max error vs PyTorch SDPA: **3.87e-07** (fp32) — well within tolerance
 
 ---
 
 ## Phase 2: Benchmark + Roofline Analysis
-**Status**: Not started
+**Status**: Complete ✓
 
 ### Objective
 Profile the naive kernel. Compute FLOPS, bytes moved, arithmetic intensity. Place on roofline to prove it's memory-bound.
 
 ### Key Decisions & Learnings
+- **FLOP counting per query row**: Pass 1 = 2·N·d_k (dot product + max), Pass 2 = 4·N·d_k (dot + exp + weighted V sum). Total per row = 6·N·d_k
+- **Byte counting per query row**: Pass 1 loads N K rows (4·N·d_k bytes), Pass 2 loads N K + N V rows (8·N·d_k bytes). Total = 12·N·d_k bytes
+- **Arithmetic Intensity** = 6Nd_k / 12Nd_k = **0.5 FLOP/byte** — constant regardless of N
+- GPU ridge point = 15 TFLOPS / 0.448 TB/s = **33.5 FLOP/byte** → kernel is 67x below ridge
+- Used `torch.cuda.Event(enable_timing=True)` for GPU-side timing (not `time.time()` — kernel launches are async)
+- 10 warmup iterations (JIT compilation + GPU clock ramp), 100 timed iterations, median latency
+- Points appeared slightly above theoretical roofline at AI=0.5 → L2 cache effect: multiple program instances reading same K/V rows get cache hits, reducing actual bytes from global memory
 
 ### Results
-<!-- Roofline plot, benchmark numbers -->
+- All seq_lens confirmed **memory-bound** (far left of ridge on roofline)
+- Larger N achieves slightly higher TFLOPS (better SM occupancy with more program instances)
+- See `roofline_naive.png` for plot
+- **Conclusion**: Optimization must reduce memory traffic, not compute → motivation for tiled FlashAttention (Phase 3)
 
 ---
 

@@ -1,0 +1,3 @@
+- wrote a simple attention kernel in python
+- Phase 1 complete: naive Triton kernel passes correctness (max error 3.87e-07 vs PyTorch SDPA)
+- Phase 2 complete: benchmark + roofline analysis confirms kernel is memory-bound (AI=0.5 FLOP/byte, ridge point=33.5)
