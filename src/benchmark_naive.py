@@ -98,6 +98,9 @@ ax.loglog(ai_range, roofline, 'k-', linewidth=2, label='Roofline')
 # BLANK 7: Plot your measured points
 ais = [r['arith_intensity'] for r in results]
 tflops = [r['achieved_tflops'] for r in results]
+bw = [r['achieved_bw'] for r in results]
+print(f"Achieved bandwidths (GB/s): {bw}")
+
 ax.loglog(ais, tflops, 'ro', markersize=10, label='Naive kernel')
 
 # Labels for each point
