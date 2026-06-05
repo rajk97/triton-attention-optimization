@@ -20,6 +20,7 @@ ONLINE SOFTMAX UPDATE (per K/V tile):
 import torch
 import triton
 import triton.language as tl
+from ipdb import set_trace
 
 
 @triton.jit
@@ -72,7 +73,8 @@ def tiled_attention_kernel(
         # BLANK A: Compute scores S = Q_block @ K_tile^T * scale
         #   Shape: [BLOCK_M, BLOCK_N]
         #   Hint: tl.dot(Q_block, tl.trans(K_tile)) * scale
-        S = ???
+        S = tl.dot(Q_block, tl.trans(K_tile), input_precision="ieee")
+        S = S *scale
 
         # BLANK B: Mask out-of-bounds keys (set their scores to -inf)
         #   so they don't affect the max or contribute to softmax
@@ -80,27 +82,27 @@ def tiled_attention_kernel(
 
         # BLANK C: Find this tile's per-row max
         #   Shape: [BLOCK_M]
-        m_tile = ???
+        m_tile = tl.max(S, axis=1)
 
         # BLANK D: Update running max
-        m_new = ???
+        m_new = tl.maximum(m_i, m_tile)
 
         # BLANK E: Compute correction factor alpha = exp(m_old - m_new)
         #   Shape: [BLOCK_M]
-        alpha = ???
+        alpha = tl.exp(m_i - m_new)
 
         # BLANK F: Compute P = exp(S - m_new[:, None])
         #   Shape: [BLOCK_M, BLOCK_N]
-        P = ???
+        P = tl.exp(S - m_new[:, None])
 
         # BLANK G: Update running denominator l
         #   l_new = alpha * l_old + sum(P, axis=1)
-        l_i = ???
+        l_i = alpha * l_i + tl.sum(P, axis=1)
 
         # BLANK H: Update running output O
         #   O_new = alpha[:, None] * O_old + P @ V_tile
         #   Hint: P needs to be cast for tl.dot; use P.to(V_tile.dtype) if needed
-        O_block = ???
+        O_block = alpha[:, None] * O_block + tl.dot(P.to(V_tile.dtype), V_tile, input_precision="ieee")
 
         # Shift: m_old becomes m_new for next iteration
         m_i = m_new
