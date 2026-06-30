@@ -20,9 +20,19 @@ ONLINE SOFTMAX UPDATE (per K/V tile):
 import torch
 import triton
 import triton.language as tl
-from ipdb import set_trace
 
 
+AUTOTUNE_CONFIGS = [
+    triton.Config({'BLOCK_M': 32, 'BLOCK_N': 64}, num_warps=2, num_stages=2),
+    triton.Config({'BLOCK_M': 32, 'BLOCK_N': 128}, num_warps=4, num_stages=2),
+    triton.Config({'BLOCK_M': 64, 'BLOCK_N': 64}, num_warps=4, num_stages=2),
+    triton.Config({'BLOCK_M': 64, 'BLOCK_N': 128}, num_warps=8, num_stages=2),
+    triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64}, num_warps=8, num_stages=2),
+    triton.Config({'BLOCK_M': 128, 'BLOCK_N': 128}, num_warps=8, num_stages=3),
+]
+
+
+@triton.autotune(configs=AUTOTUNE_CONFIGS, key=['N'])
 @triton.jit
 def tiled_attention_kernel(
     Q_ptr, K_ptr, V_ptr, O_ptr,
@@ -115,18 +125,33 @@ def tiled_attention_kernel(
     tl.store(o_ptrs, O_block, mask=q_mask)
 
 
-def tiled_attention(Q, K, V, BLOCK_M=64, BLOCK_N=64):
+def tiled_attention(Q, K, V, BLOCK_M=None, BLOCK_N=None):
     N, d_k = Q.shape
     O = torch.empty(N, d_k, device=Q.device, dtype=torch.float32)
-    grid = (triton.cdiv(N, BLOCK_M),)
-    tiled_attention_kernel[grid](
-        Q, K, V, O,
-        N,
-        Q.stride(0), K.stride(0), V.stride(0), O.stride(0),
-        BLOCK_M=BLOCK_M,
-        BLOCK_N=BLOCK_N,
-        d_k=d_k,
-    )
+    use_manual_tiles = (BLOCK_M is not None) or (BLOCK_N is not None)
+
+    if use_manual_tiles:
+        block_m = 64 if BLOCK_M is None else BLOCK_M
+        block_n = 64 if BLOCK_N is None else BLOCK_N
+        grid = (triton.cdiv(N, block_m),)
+        tiled_attention_kernel[grid](
+            Q, K, V, O,
+            N,
+            Q.stride(0), K.stride(0), V.stride(0), O.stride(0),
+            BLOCK_M=block_m,
+            BLOCK_N=block_n,
+            d_k=d_k,
+        )
+    else:
+        # Let Triton select the best config from AUTOTUNE_CONFIGS for this N.
+        grid = lambda meta: (triton.cdiv(N, meta['BLOCK_M']),)
+        tiled_attention_kernel[grid](
+            Q, K, V, O,
+            N,
+            Q.stride(0), K.stride(0), V.stride(0), O.stride(0),
+            d_k=d_k,
+        )
+
     return O
 
 

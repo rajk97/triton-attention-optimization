@@ -8,6 +8,7 @@ compute-bound region (AI ~48 for BLOCK_M=64).
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
+import torch.nn.functional as F
 
 from triton_native import naive_attention
 from triton_tiled import tiled_attention
@@ -41,7 +42,7 @@ def compute_bytes_tiled(N, d_k, BLOCK_M):
 
 
 # ---------- Benchmark helper ----------
-def benchmark(kernel_fn, N, d_k, label):
+def benchmark(kernel_fn, N, d_k):
     Q = torch.randn(N, d_k, device='cuda', dtype=torch.float32)
     K = torch.randn(N, d_k, device='cuda', dtype=torch.float32)
     V = torch.randn(N, d_k, device='cuda', dtype=torch.float32)
@@ -63,16 +64,28 @@ def benchmark(kernel_fn, N, d_k, label):
     return median_ms
 
 
+def sdpa_attention(Q, K, V):
+    # PyTorch SDPA expects (..., seq_len, d_k), so we add batch/head dims.
+    return F.scaled_dot_product_attention(
+        Q[None, None, :, :],
+        K[None, None, :, :],
+        V[None, None, :, :],
+        dropout_p=0.0,
+        is_causal=False,
+    )[0, 0]
+
+
 # ---------- Run both kernels ----------
 naive_results = []
 tiled_results = []
+sdpa_results = []
 
-print(f"{'N':>6} | {'kernel':>6} | {'ms':>9} | {'TFLOPS':>7} | {'GB/s':>7} | {'AI':>6}")
+print(f"{'N':>6} | {'kernel':>8} | {'ms':>9} | {'TFLOPS':>7} | {'GB/s':>7} | {'AI':>6}")
 print("-" * 60)
 
 for N in SEQ_LENS:
     # Naive
-    ms = benchmark(naive_attention, N, D_K, 'naive')
+    ms = benchmark(naive_attention, N, D_K)
     s = ms / 1000.0
     flops = compute_flops(N, D_K)
     bytes_ = compute_bytes_naive(N, D_K)
@@ -83,11 +96,11 @@ for N in SEQ_LENS:
         'ai': flops / bytes_,
     })
     r = naive_results[-1]
-    print(f"{N:>6} | {'naive':>6} | {ms:>9.3f} | {r['tflops']:>7.3f} | "
+    print(f"{N:>6} | {'naive':>8} | {ms:>9.3f} | {r['tflops']:>7.3f} | "
           f"{r['bw']:>7.1f} | {r['ai']:>6.2f}")
 
-    # Tiled
-    ms = benchmark(tiled_attention, N, D_K, 'tiled')
+    # Tiled (autotuned)
+    ms = benchmark(tiled_attention, N, D_K)
     s = ms / 1000.0
     bytes_ = compute_bytes_tiled(N, D_K, BLOCK_M_TILED)
     tiled_results.append({
@@ -97,8 +110,19 @@ for N in SEQ_LENS:
         'ai': flops / bytes_,
     })
     r = tiled_results[-1]
-    print(f"{N:>6} | {'tiled':>6} | {ms:>9.3f} | {r['tflops']:>7.3f} | "
+    print(f"{N:>6} | {'tiled':>8} | {ms:>9.3f} | {r['tflops']:>7.3f} | "
           f"{r['bw']:>7.1f} | {r['ai']:>6.2f}")
+
+    # PyTorch SDPA baseline (fused implementation)
+    ms = benchmark(sdpa_attention, N, D_K)
+    s = ms / 1000.0
+    sdpa_results.append({
+        'N': N, 'ms': ms,
+        'tflops': flops / s / 1e12,
+    })
+    r = sdpa_results[-1]
+    print(f"{N:>6} | {'sdpa':>8} | {ms:>9.3f} | {r['tflops']:>7.3f} | "
+          f"{'-':>7} | {'-':>6}")
 
 # ---------- Joint roofline plot ----------
 fig, ax = plt.subplots(figsize=(11, 6.5))
@@ -141,3 +165,22 @@ plt.tight_layout()
 out_path = '../roofline_comparison.png'
 plt.savefig(out_path, dpi=150)
 print(f"\nSaved {out_path}")
+
+# ---------- TFLOPS vs sequence length (all kernels) ----------
+fig, ax = plt.subplots(figsize=(9.5, 5.8))
+
+ax.plot(SEQ_LENS, [r['tflops'] for r in naive_results], 'o-', linewidth=2, label='Naive Triton')
+ax.plot(SEQ_LENS, [r['tflops'] for r in tiled_results], '^-', linewidth=2, label='Tiled Triton (autotuned)')
+ax.plot(SEQ_LENS, [r['tflops'] for r in sdpa_results], 's-', linewidth=2, label='PyTorch SDPA')
+
+ax.set_xlabel('Sequence Length (N)')
+ax.set_ylabel('Performance (TFLOPS)')
+ax.set_title('Attention Performance vs Sequence Length (RTX 5060 Laptop)')
+ax.set_xscale('log', base=2)
+ax.grid(True, which='both', alpha=0.3)
+ax.legend()
+plt.tight_layout()
+
+perf_out = '../performance_comparison.png'
+plt.savefig(perf_out, dpi=150)
+print(f"Saved {perf_out}")
